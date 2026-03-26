@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import { del } from "@vercel/blob";
+import { del, list } from "@vercel/blob";
 import { kv } from "../../../lib/kv";
 
 export const runtime = "nodejs";
@@ -50,6 +50,21 @@ function listToLatest(photos: Photo[]) {
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
+function photoFromBlobPathname(pathname: string, url: string, uploadedAtMs: number): Photo | null {
+  if (!pathname.startsWith("photos/")) return null;
+  const filename = pathname.slice("photos/".length);
+  const dot = filename.lastIndexOf(".");
+  const id = dot > 0 ? filename.slice(0, dot) : filename;
+  if (!id) return null;
+  return {
+    id,
+    name: filename,
+    url,
+    createdAt: uploadedAtMs,
+    blobPathname: pathname,
+  };
+}
+
 export async function GET() {
   try {
     // 1) 生产：Vercel KV（使用单 key 保存 id 列表）
@@ -82,7 +97,18 @@ export async function GET() {
         ids = [];
       }
 
-      if (ids.length === 0) return NextResponse.json({ ok: true, photos: [] });
+      if (ids.length === 0) {
+        // 兜底：索引为空时，从 Blob 列表恢复展示（避免“上传成功但刷新后看不到”）
+        try {
+          const blobs = await list({ prefix: "photos/" });
+          const photos = blobs.blobs
+            .map((b) => photoFromBlobPathname(b.pathname, b.url, new Date(b.uploadedAt).getTime()))
+            .filter(Boolean) as Photo[];
+          return NextResponse.json({ ok: true, photos: listToLatest(photos) });
+        } catch {
+          return NextResponse.json({ ok: true, photos: [] });
+        }
+      }
 
       const photos: Photo[] = [];
       for (const id of ids) {
