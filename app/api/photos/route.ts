@@ -6,6 +6,8 @@ import { del } from "@vercel/blob";
 import { redis } from "../../../lib/redis";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type Photo = {
   id: string;

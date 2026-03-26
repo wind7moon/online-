@@ -37,7 +37,10 @@ export function PhotoGallery() {
   });
 
   const loadPhotos = useCallback(async (): Promise<Photo[]> => {
-    const data = (await fetchJson("/api/photos", { method: "GET" })) as { photos?: Photo[] };
+    const data = (await fetchJson("/api/photos", {
+      method: "GET",
+      cache: "no-store",
+    })) as { photos?: Photo[] };
     const list = data.photos || [];
     setPhotos(list);
     return list;
