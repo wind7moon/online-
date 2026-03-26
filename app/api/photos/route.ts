@@ -54,30 +54,41 @@ export async function GET() {
   try {
     // 1) 生产：Vercel KV（使用单 key 保存 id 列表）
     if (kv) {
-      const idsValue = await kv.get<unknown>(META_KEY_IDS);
       let ids: string[] = [];
-      if (Array.isArray(idsValue)) {
-        ids = idsValue.filter((x: unknown): x is string => typeof x === "string");
-      } else if (typeof idsValue === "string") {
-        try {
-          const parsed = JSON.parse(idsValue);
-          if (Array.isArray(parsed)) {
-            ids = parsed.filter((x: unknown): x is string => typeof x === "string");
+      try {
+        const idsValue = await kv.get<unknown>(META_KEY_IDS);
+        if (Array.isArray(idsValue)) {
+          ids = idsValue.filter((x: unknown): x is string => typeof x === "string");
+        } else if (typeof idsValue === "string") {
+          try {
+            const parsed = JSON.parse(idsValue);
+            if (Array.isArray(parsed)) {
+              ids = parsed.filter((x: unknown): x is string => typeof x === "string");
+            }
+          } catch {
+            ids = [];
           }
-        } catch {
-          ids = [];
         }
+      } catch (e) {
+        // 发生 WRONGTYPE 时，删除旧 key 并返回空列表（让系统可自愈）
+        const msg = e instanceof Error ? e.message : "";
+        if (msg.includes("WRONGTYPE") || msg.includes("wrong kind of value")) {
+          await kv.del(META_KEY_IDS);
+        }
+        ids = [];
       }
+
       if (ids.length === 0) return NextResponse.json({ ok: true, photos: [] });
 
       const photos: Photo[] = [];
       for (const id of ids) {
-        const v = await kv.get<string | null>(`photo:${id}`);
-        if (!v) continue;
+        // 同样避免旧类型导致单个 photo key 异常把整个接口打挂
         try {
+          const v = await kv.get<string | null>(`photo:${id}`);
+          if (!v) continue;
           photos.push(JSON.parse(v) as Photo);
         } catch {
-          // ignore corrupted entry
+          // ignore corrupted/wrong-type entry
         }
       }
       return NextResponse.json({ ok: true, photos: listToLatest(photos) });

@@ -44,18 +44,30 @@ export async function POST(request: Request) {
   const createdAt = Date.now();
   const photo = { id, name, url, createdAt, blobPathname };
   await kv.set(`photo:${id}`, JSON.stringify(photo));
-  const idsValue = await kv.get<unknown>("photos:ids");
+  // photos:ids 可能因为历史版本导致类型不一致（WRONGTYPE），这里做容错并自动重建
   let ids: string[] = [];
-  if (Array.isArray(idsValue)) {
-    ids = idsValue.filter((x): x is string => typeof x === "string");
-  } else if (typeof idsValue === "string") {
-    try {
-      const parsed = JSON.parse(idsValue);
-      if (Array.isArray(parsed)) ids = parsed.filter((x: unknown): x is string => typeof x === "string");
-    } catch {
+  try {
+    const idsValue = await kv.get<unknown>("photos:ids");
+    if (Array.isArray(idsValue)) {
+      ids = idsValue.filter((x): x is string => typeof x === "string");
+    } else if (typeof idsValue === "string") {
+      try {
+        const parsed = JSON.parse(idsValue);
+        if (Array.isArray(parsed)) ids = parsed.filter((x: unknown): x is string => typeof x === "string");
+      } catch {
+        ids = [];
+      }
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.includes("WRONGTYPE") || msg.includes("wrong kind of value")) {
+      await kv.del("photos:ids");
       ids = [];
+    } else {
+      throw e;
     }
   }
+
   if (!ids.includes(id)) ids.push(id);
   await kv.set("photos:ids", ids);
 
