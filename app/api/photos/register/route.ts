@@ -69,7 +69,8 @@ export async function POST(request: Request) {
   }
 
   if (!ids.includes(id)) ids.push(id);
-  await kv.set("photos:ids", ids);
+  // 强制以 JSON 字符串存储，避免数组被隐式转为 "a,b" 等非 JSON 格式
+  await kv.set("photos:ids", JSON.stringify(ids));
 
   return NextResponse.json({ ok: true });
 }

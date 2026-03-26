@@ -57,7 +57,7 @@ export async function GET() {
       let ids: string[] = [];
       try {
         const idsValue = await kv.get<unknown>(META_KEY_IDS);
-        if (Array.isArray(idsValue)) {
+      if (Array.isArray(idsValue)) {
           ids = idsValue.filter((x: unknown): x is string => typeof x === "string");
         } else if (typeof idsValue === "string") {
           try {
@@ -66,7 +66,11 @@ export async function GET() {
               ids = parsed.filter((x: unknown): x is string => typeof x === "string");
             }
           } catch {
-            ids = [];
+          // 兼容旧数据：如果之前把数组直接写成了 "a,b" 这种形式
+          ids = idsValue
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
           }
         }
       } catch (e) {
