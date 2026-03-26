@@ -58,18 +58,17 @@ export async function GET() {
       return NextResponse.json({ ok: true, photos: [] });
     }
 
-    const keys = ids.map((id) => `photo:${id}`);
-    const values = (await redis.mget(...keys)) as Array<string | null>;
-    const photos: Photo[] = values
-      .map((v) => {
-        if (!v) return null;
-        try {
-          return JSON.parse(v) as Photo;
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean) as Photo[];
+    // 使用逐个 get，避免 Upstash SDK 对 mget 参数/返回的兼容差异
+    const photos: Photo[] = [];
+    for (const id of ids) {
+      const v = (await redis.get(`photo:${id}`)) as string | null;
+      if (!v) continue;
+      try {
+        photos.push(JSON.parse(v) as Photo);
+      } catch {
+        // 忽略损坏数据
+      }
+    }
 
     return NextResponse.json({ ok: true, photos: listToLatest(photos) });
   }
@@ -146,18 +145,16 @@ export async function DELETE() {
       return NextResponse.json({ ok: true });
     }
 
-    const keys = ids.map((id) => `photo:${id}`);
-    const values = (await redis.mget(...keys)) as Array<string | null>;
-    const photos: Photo[] = values
-      .map((v) => {
-        if (!v) return null;
-        try {
-          return JSON.parse(v) as Photo;
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean) as Photo[];
+    const photos: Photo[] = [];
+    for (const id of ids) {
+      const v = (await redis.get(`photo:${id}`)) as string | null;
+      if (!v) continue;
+      try {
+        photos.push(JSON.parse(v) as Photo);
+      } catch {
+        // ignore
+      }
+    }
 
     const blobPathnames = photos.map((p) => p.blobPathname).filter(Boolean) as string[];
     if (blobPathnames.length) {
