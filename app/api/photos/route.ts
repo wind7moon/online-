@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { del } from "@vercel/blob";
-import { redis } from "../../../lib/redis";
+import { kv } from "../../../lib/kv";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,24 +52,34 @@ function listToLatest(photos: Photo[]) {
 
 export async function GET() {
   // 1) 生产：Upstash + Blob
-  if (redis) {
-    const ids = (await redis.smembers(META_KEY_IDS)) as string[];
-    if (!ids || ids.length === 0) {
-      return NextResponse.json({ ok: true, photos: [] });
+  // 生产：Vercel KV（使用单 key 保存 id 列表，避免 set 相关兼容问题）
+  if (kv) {
+    const idsValue = await kv.get<unknown>(META_KEY_IDS);
+    let ids: string[] = [];
+    if (Array.isArray(idsValue)) {
+      ids = idsValue.filter((x: unknown): x is string => typeof x === "string");
+    } else if (typeof idsValue === "string") {
+      try {
+        const parsed = JSON.parse(idsValue);
+        if (Array.isArray(parsed)) {
+          ids = parsed.filter((x: unknown): x is string => typeof x === "string");
+        }
+      } catch {
+        ids = [];
+      }
     }
+    if (ids.length === 0) return NextResponse.json({ ok: true, photos: [] });
 
-    // 使用逐个 get，避免 Upstash SDK 对 mget 参数/返回的兼容差异
     const photos: Photo[] = [];
     for (const id of ids) {
-      const v = (await redis.get(`photo:${id}`)) as string | null;
+      const v = await kv.get<string | null>(`photo:${id}`);
       if (!v) continue;
       try {
         photos.push(JSON.parse(v) as Photo);
       } catch {
-        // 忽略损坏数据
+        // ignore corrupted entry
       }
     }
-
     return NextResponse.json({ ok: true, photos: listToLatest(photos) });
   }
 
@@ -96,7 +106,7 @@ export async function POST(request: Request) {
   }
 
   // 生产环境（Blob + Redis）：大文件请使用客户端直传 + /api/photos/register，避免 4.5MB 限制
-  if (redis && process.env.BLOB_READ_WRITE_TOKEN) {
+  if (kv && process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json(
       {
         ok: false,
@@ -139,15 +149,27 @@ export async function POST(request: Request) {
 
 export async function DELETE() {
   // 1) 生产：Upstash + Blob
-  if (redis && process.env.BLOB_READ_WRITE_TOKEN) {
-    const ids = (await redis.smembers(META_KEY_IDS)) as string[];
-    if (!ids || ids.length === 0) {
-      return NextResponse.json({ ok: true });
+  // 生产：Vercel KV
+  if (kv && process.env.BLOB_READ_WRITE_TOKEN) {
+    const idsValue = await kv.get<unknown>(META_KEY_IDS);
+    let ids: string[] = [];
+    if (Array.isArray(idsValue)) {
+      ids = idsValue.filter((x: unknown): x is string => typeof x === "string");
+    } else if (typeof idsValue === "string") {
+      try {
+        const parsed = JSON.parse(idsValue);
+        if (Array.isArray(parsed)) {
+          ids = parsed.filter((x: unknown): x is string => typeof x === "string");
+        }
+      } catch {
+        ids = [];
+      }
     }
+    if (ids.length === 0) return NextResponse.json({ ok: true });
 
     const photos: Photo[] = [];
     for (const id of ids) {
-      const v = (await redis.get(`photo:${id}`)) as string | null;
+      const v = await kv.get<string | null>(`photo:${id}`);
       if (!v) continue;
       try {
         photos.push(JSON.parse(v) as Photo);
@@ -157,16 +179,12 @@ export async function DELETE() {
     }
 
     const blobPathnames = photos.map((p) => p.blobPathname).filter(Boolean) as string[];
-    if (blobPathnames.length) {
-      await del(blobPathnames);
-    }
+    if (blobPathnames.length) await del(blobPathnames);
 
-    // 清空索引与所有 photo:{id}
-    await redis.del(META_KEY_IDS);
+    await kv.del(META_KEY_IDS);
     for (const id of ids) {
-      await redis.del(`photo:${id}`);
+      await kv.del(`photo:${id}`);
     }
-
     return NextResponse.json({ ok: true });
   }
 

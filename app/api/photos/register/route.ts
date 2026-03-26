@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { head } from "@vercel/blob";
-import { redis } from "../../../../lib/redis";
+import { kv } from "../../../../lib/kv";
 
 export const runtime = "nodejs";
 
@@ -13,7 +13,7 @@ type Body = {
 
 /** 客户端直传 Blob 成功后，登记元数据到 Upstash Redis */
 export async function POST(request: Request) {
-  if (!redis || !process.env.BLOB_READ_WRITE_TOKEN) {
+  if (!kv || !process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json({ ok: false, message: "未配置 Redis / Blob" }, { status: 400 });
   }
 
@@ -43,8 +43,21 @@ export async function POST(request: Request) {
 
   const createdAt = Date.now();
   const photo = { id, name, url, createdAt, blobPathname };
-  await redis.set(`photo:${id}`, JSON.stringify(photo));
-  await redis.sadd("photos:ids", id);
+  await kv.set(`photo:${id}`, JSON.stringify(photo));
+  const idsValue = await kv.get<unknown>("photos:ids");
+  let ids: string[] = [];
+  if (Array.isArray(idsValue)) {
+    ids = idsValue.filter((x): x is string => typeof x === "string");
+  } else if (typeof idsValue === "string") {
+    try {
+      const parsed = JSON.parse(idsValue);
+      if (Array.isArray(parsed)) ids = parsed.filter((x: unknown): x is string => typeof x === "string");
+    } catch {
+      ids = [];
+    }
+  }
+  if (!ids.includes(id)) ids.push(id);
+  await kv.set("photos:ids", ids);
 
   return NextResponse.json({ ok: true });
 }
