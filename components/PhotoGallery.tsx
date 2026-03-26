@@ -54,7 +54,11 @@ export function PhotoGallery() {
         setStatus(list.length ? `已加载 ${list.length} 张照片。` : "暂无照片。");
       } catch (e) {
         console.error(e);
-        setStatus("加载失败：请确认后端可用（GET /api/photos）。");
+        setStatus(
+          e instanceof Error
+            ? `加载失败：${e.message}`
+            : "加载失败：请确认后端可用（GET /api/photos）。"
+        );
       }
     })();
   }, [loadPhotos]);

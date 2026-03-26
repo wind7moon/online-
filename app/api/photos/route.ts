@@ -51,41 +51,45 @@ function listToLatest(photos: Photo[]) {
 }
 
 export async function GET() {
-  // 1) 生产：Upstash + Blob
-  // 生产：Vercel KV（使用单 key 保存 id 列表，避免 set 相关兼容问题）
-  if (kv) {
-    const idsValue = await kv.get<unknown>(META_KEY_IDS);
-    let ids: string[] = [];
-    if (Array.isArray(idsValue)) {
-      ids = idsValue.filter((x: unknown): x is string => typeof x === "string");
-    } else if (typeof idsValue === "string") {
-      try {
-        const parsed = JSON.parse(idsValue);
-        if (Array.isArray(parsed)) {
-          ids = parsed.filter((x: unknown): x is string => typeof x === "string");
+  try {
+    // 1) 生产：Vercel KV（使用单 key 保存 id 列表）
+    if (kv) {
+      const idsValue = await kv.get<unknown>(META_KEY_IDS);
+      let ids: string[] = [];
+      if (Array.isArray(idsValue)) {
+        ids = idsValue.filter((x: unknown): x is string => typeof x === "string");
+      } else if (typeof idsValue === "string") {
+        try {
+          const parsed = JSON.parse(idsValue);
+          if (Array.isArray(parsed)) {
+            ids = parsed.filter((x: unknown): x is string => typeof x === "string");
+          }
+        } catch {
+          ids = [];
         }
-      } catch {
-        ids = [];
       }
-    }
-    if (ids.length === 0) return NextResponse.json({ ok: true, photos: [] });
+      if (ids.length === 0) return NextResponse.json({ ok: true, photos: [] });
 
-    const photos: Photo[] = [];
-    for (const id of ids) {
-      const v = await kv.get<string | null>(`photo:${id}`);
-      if (!v) continue;
-      try {
-        photos.push(JSON.parse(v) as Photo);
-      } catch {
-        // ignore corrupted entry
+      const photos: Photo[] = [];
+      for (const id of ids) {
+        const v = await kv.get<string | null>(`photo:${id}`);
+        if (!v) continue;
+        try {
+          photos.push(JSON.parse(v) as Photo);
+        } catch {
+          // ignore corrupted entry
+        }
       }
+      return NextResponse.json({ ok: true, photos: listToLatest(photos) });
     }
-    return NextResponse.json({ ok: true, photos: listToLatest(photos) });
+
+    // 2) 本地 fallback：文件系统
+    const photos = listToLatest(readDevPhotos());
+    return NextResponse.json({ ok: true, photos });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "GET /api/photos failed";
+    return NextResponse.json({ ok: false, message: msg }, { status: 500 });
   }
-
-  // 2) 本地 fallback：文件系统
-  const photos = listToLatest(readDevPhotos());
-  return NextResponse.json({ ok: true, photos });
 }
 
 export async function POST(request: Request) {
